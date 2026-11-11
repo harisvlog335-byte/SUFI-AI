@@ -1,329 +1,103 @@
 package com.sufi.ai
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
+import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
-private val Bg = Color(0xFF080D16)
-private val Panel = Color(0xFF121C2B)
-private val Cyan = Color(0xFF43D9E8)
-private val White = Color(0xFFEAF4FF)
-
-data class ChatMessage(val text: String, val fromUser: Boolean)
-
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
+    private lateinit var chat: TextView
+    private lateinit var input: EditText
+    private lateinit var status: TextView
     private var tts: TextToSpeech? = null
-    private var speechRecognizer: SpeechRecognizer? = null
-    private var speechResult: ((String) -> Unit)? = null
-
-    private val micPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) startListeningInternal()
-    }
+    private val client = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
+    private val jsonType = "application/json; charset=utf-8".toMediaType()
+    private val model = "gemini-2.5-flash"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        chat = findViewById(R.id.chat); input = findViewById(R.id.input); status = findViewById(R.id.status)
         tts = TextToSpeech(this, this)
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        findViewById<Button>(R.id.send).setOnClickListener { sendMessage() }
+        findViewById<Button>(R.id.voice).setOnClickListener { startSpeechInput() }
+        findViewById<Button>(R.id.youtube).setOnClickListener { openApp("com.google.android.youtube") }
+    }
+
+    private fun append(line: String) { chat.append("\n\n$line") }
+
+    private fun sendMessage() {
+        val prompt = input.text.toString().trim()
+        if (prompt.isEmpty()) return
+        input.setText(""); append("YOU: $prompt")
+        when {
+            prompt.contains("open youtube", true) || prompt.contains("youtube kholo", true) -> { openApp("com.google.android.youtube"); reply("YouTube kholne ki koshish kar rahi hoon."); return }
+            prompt.contains("open chrome", true) || prompt.contains("chrome kholo", true) -> { openApp("com.android.chrome"); reply("Chrome kholne ki koshish kar rahi hoon."); return }
         }
-        setContent { SufiScreen(
-            speak = { speak(it) },
-            listen = { callback ->
-                speechResult = callback
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                    == PackageManager.PERMISSION_GRANTED) startListeningInternal()
-                else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        if (BuildConfig.GEMINI_API_KEY.isBlank()) { reply("Gemini API key set nahi hai. README mein diye gaye steps follow karein."); return }
+        status.text = "THINKING..."
+        val part = JSONObject().put("text", "You are SUFI, a helpful professional female AI assistant. Reply naturally in Hindi, Hinglish or English according to the user. Be concise, safe and honest. User says: $prompt")
+        val bodyJson = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(part))))
+        val requestBody = bodyJson.toString().toRequestBody(jsonType)
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=${BuildConfig.GEMINI_API_KEY}"
+        val request = Request.Builder().url(url).post(requestBody).build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { runOnUiThread { status.text = "ONLINE • READY"; reply("Network error: ${e.localizedMessage ?: "connection failed"}") } }
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val raw = it.body?.string().orEmpty()
+                    val answer = try { JSONObject(raw).getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text") }
+                    catch (_: Exception) { "AI response nahi mil saka (HTTP ${it.code}). API key aur Gemini access check karein." }
+                    runOnUiThread { status.text = "ONLINE • READY"; reply(answer) }
+                }
             }
-        ) }
+        })
     }
 
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale("hi", "IN")
-            tts?.setSpeechRate(0.95f)
+    private fun reply(message: String) { append("SUFI: $message"); tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "sufi_reply") }
+
+    private fun startSpeechInput() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 41); return
         }
-    }
-
-    private fun speak(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "sufi_reply")
-    }
-
-    private fun startListeningInternal() {
-        val recognizer = speechRecognizer ?: return
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "hi-IN")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "SUFI ko boliye...")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN"); putExtra(RecognizerIntent.EXTRA_PROMPT, "Talk to SUFI")
         }
-        recognizer.setRecognitionListener(object : android.speech.RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onError(error: Int) {
-                speechResult?.invoke("Voice samajh nahi aayi. Dobara try karo.")
-            }
-            override fun onResults(results: Bundle?) {
-                val words = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                speechResult?.invoke(words?.firstOrNull().orEmpty())
-            }
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        recognizer.startListening(intent)
+        try { startActivityForResult(intent, 42) } catch (_: Exception) { Toast.makeText(this, "Speech recognition unavailable", Toast.LENGTH_SHORT).show() }
     }
 
-    override fun onDestroy() {
-        speechRecognizer?.destroy()
-        tts?.stop()
-        tts?.shutdown()
-        super.onDestroy()
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SufiScreen(
-    speak: (String) -> Unit,
-    listen: ((String) -> Unit) -> Unit
-) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("sufi_settings", 0) }
-    var apiKey by remember { mutableStateOf(prefs.getString("gemini_key", "") ?: "") }
-    var draft by remember { mutableStateOf("") }
-    var showSettings by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage("Assalamualaikum! Main SUFI AI hoon. Bataiye, main aapki kya madad kar sakti hoon?", false)
-        )
-    }
-
-    fun handleLocalCommand(raw: String): Boolean {
-        val q = raw.lowercase(Locale.ROOT)
-        if (q.contains("youtube")) {
-            val intent = context.packageManager.getLaunchIntentForPackage("com.google.android.youtube")
-                ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com"))
-            context.startActivity(intent)
-            messages.add(ChatMessage("YouTube open kar rahi hoon.", false))
-            speak("YouTube open kar rahi hoon.")
-            return true
-        }
-        if (q.contains("chrome")) {
-            val intent = context.packageManager.getLaunchIntentForPackage("com.android.chrome")
-            if (intent != null) context.startActivity(intent)
-            else context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com")))
-            messages.add(ChatMessage("Browser open karne ki koshish kar rahi hoon.", false))
-            speak("Browser open kar rahi hoon.")
-            return true
-        }
-        if (q.contains("time") || q.contains("samay") || q.contains("kitne baje")) {
-            val answer = "Abhi " + java.text.SimpleDateFormat("hh:mm a", Locale.getDefault()).format(java.util.Date()) + " baj rahe hain."
-            messages.add(ChatMessage(answer, false)); speak(answer); return true
-        }
-        return false
-    }
-
-    suspend fun askGemini(question: String, key: String): String = withContext(Dispatchers.IO) {
-        require(key.isNotBlank()) { "Pehle Settings mein Gemini API key add karo." }
-        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
-                URLEncoder.encode(key, "UTF-8")
-        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 20000
-            readTimeout = 30000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-        }
-        try {
-            val body = JSONObject()
-                .put("systemInstruction", JSONObject().put("parts", JSONArray().put(
-                    JSONObject().put("text", "You are SUFI, a helpful, professional female AI assistant. Reply naturally in the user's language, especially Hindi or Hinglish. Be concise, safe, and honest. You cannot directly control the phone except for commands implemented by the app.")
-                )))
-                .put("contents", JSONArray().put(
-                    JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", question)))
-                ))
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val response = stream.bufferedReader().use { it.readText() }
-            if (code !in 200..299) {
-                val message = runCatching { JSONObject(response).optJSONObject("error")?.optString("message") }.getOrNull()
-                throw IllegalStateException("Gemini error $code: ${message ?: response.take(250)}")
-            }
-            val json = JSONObject(response)
-            json.getJSONArray("candidates").getJSONObject(0)
-                .getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
-        } finally { conn.disconnect() }
-    }
-
-    fun sendMessage(text: String) {
-        val clean = text.trim()
-        if (clean.isEmpty() || busy) return
-        messages.add(ChatMessage(clean, true))
-        draft = ""
-        if (handleLocalCommand(clean)) return
-        busy = true
-        scope.launch {
-            try {
-                val answer = askGemini(clean, apiKey)
-                messages.add(ChatMessage(answer, false))
-                speak(answer)
-            } catch (e: Exception) {
-                val error = e.message ?: "Unknown error"
-                messages.add(ChatMessage(error, false))
-                speak("Maaf kijiye, abhi jawab nahi mil paaya.")
-            } finally { busy = false }
+    @Deprecated("Uses activity result for compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 42 && resultCode == Activity.RESULT_OK) {
+            val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spoken.isNullOrBlank()) { input.setText(spoken); sendMessage() }
         }
     }
 
-    Scaffold(
-        containerColor = Bg,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("SUFI AI", color = White, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                        Text("Your personal AI assistant", color = Cyan, fontSize = 11.sp)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Cyan)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)
-            )
-        },
-        bottomBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().background(Panel).padding(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = draft, onValueChange = { draft = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("SUFI se kuch bhi poochho...", color = Color.LightGray) },
-                    maxLines = 4,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = White, unfocusedTextColor = White,
-                        focusedBorderColor = Cyan, unfocusedBorderColor = Color.DarkGray,
-                        cursorColor = Cyan
-                    )
-                )
-                IconButton(onClick = { listen { result -> if (result.isNotBlank()) sendMessage(result) } }) {
-                    Icon(Icons.Default.Mic, contentDescription = "Speak", tint = Cyan)
-                }
-                IconButton(onClick = { sendMessage(draft) }, enabled = !busy) {
-                    Icon(Icons.Default.Send, contentDescription = "Send", tint = Cyan)
-                }
-            }
-        }
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 14.dp)) {
-            Spacer(Modifier.height(12.dp))
-            Box(
-                Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(18.dp)).padding(18.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("◉", color = Cyan, fontSize = 42.sp)
-                    Text(if (busy) "THINKING..." else "READY TO ASSIST", color = Cyan, fontSize = 12.sp, letterSpacing = 2.sp)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 14.dp)
-            ) {
-                items(messages) { msg ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement =
-                        if (msg.fromUser) Arrangement.End else Arrangement.Start) {
-                        Box(
-                            Modifier.widthIn(max = 310.dp)
-                                .background(if (msg.fromUser) Color(0xFF123D50) else Panel, RoundedCornerShape(16.dp))
-                                .padding(13.dp)
-                        ) {
-                            Text(msg.text, color = White, fontSize = 14.sp)
-                        }
-                    }
-                }
-            }
-        }
+    private fun openApp(packageName: String) {
+        val launch = packageManager.getLaunchIntentForPackage(packageName)
+        if (launch != null) startActivity(launch) else Toast.makeText(this, "App nahi mila", Toast.LENGTH_SHORT).show()
     }
-
-    if (showSettings) {
-        AlertDialog(
-            onDismissRequest = { showSettings = false },
-            containerColor = Panel,
-            title = { Text("SUFI Settings", color = White) },
-            text = {
-                Column {
-                    Text("Gemini API key", color = Cyan)
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = apiKey, onValueChange = { apiKey = it },
-                        visualTransformation = PasswordVisualTransformation(),
-                        placeholder = { Text("Paste your API key") },
-                        singleLine = true
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("Key is stored on this device. Do not share it or upload it publicly.", color = Color.LightGray, fontSize = 11.sp)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    prefs.edit().putString("gemini_key", apiKey.trim()).apply()
-                    showSettings = false
-                }) { Text("SAVE", color = Cyan) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSettings = false }) { Text("CANCEL", color = White) }
-            }
-        )
-    }
+    override fun onInit(result: Int) { if (result == TextToSpeech.SUCCESS) { tts?.language = Locale("hi", "IN"); tts?.setSpeechRate(0.96f) } }
+    override fun onDestroy() { tts?.stop(); tts?.shutdown(); client.dispatcher.executorService.shutdown(); super.onDestroy() }
 }

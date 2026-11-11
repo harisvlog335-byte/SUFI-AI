@@ -1,0 +1,17 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="18dp" android:background="@color/sufi_bg">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="SUFI AI" android:textColor="@color/sufi_text" android:textSize="28sp" android:textStyle="bold" android:gravity="center" android:paddingTop="12dp" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="YOUR PERSONAL AI ASSISTANT" android:textColor="@color/sufi_cyan" android:textSize="10sp" android:gravity="center" android:paddingBottom="12dp" />
+    <View android:layout_width="116dp" android:layout_height="116dp" android:layout_gravity="center" android:layout_marginTop="8dp" android:background="@drawable/orb" />
+    <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="ONLINE • READY" android:textColor="@color/sufi_cyan" android:textSize="11sp" android:gravity="center" android:padding="10dp" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true">
+        <TextView android:id="@+id/chat" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="14dp" android:background="#1A1B35" android:textColor="@color/sufi_text" android:textSize="15sp" android:lineSpacingExtra="5dp" android:text="SUFI: Assalamu alaikum! Main SUFI hoon. Aaj main aapki kya help kar sakti hoon?" />
+    </ScrollView>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="12dp">
+        <EditText android:id="@+id/input" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:hint="Message SUFI..." android:textColor="#FFFFFF" android:textColorHint="#A7A5BC" android:singleLine="true" android:paddingHorizontal="14dp" android:background="#1A1B35" android:imeOptions="actionSend" />
+        <Button android:id="@+id/send" android:layout_width="wrap_content" android:layout_height="52dp" android:text="SEND" android:backgroundTint="#7C3AED" android:layout_marginStart="8dp" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center" android:paddingTop="8dp">
+        <Button android:id="@+id/voice" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="🎙 SPEAK" android:backgroundTint="#155E75" />
+        <Button android:id="@+id/youtube" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1" android:text="OPEN YOUTUBE" android:backgroundTint="#4C1D95" android:layout_marginStart="8dp" />
+    </LinearLayout>
+</LinearLayout>
